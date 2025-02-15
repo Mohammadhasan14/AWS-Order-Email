@@ -36,6 +36,7 @@
     "@shopify/shopify-app-remix": "^3.7.0",
     "@shopify/shopify-app-session-storage-mongodb": "^4.0.12",
     "@shopify/shopify-app-session-storage-prisma": "^6.0.0",
+    "cron": "^3.5.0",
     "dotenv": "^16.4.7",
     "isbot": "^5.1.0",
     "mongoose": "^8.10.0",

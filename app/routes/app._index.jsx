@@ -1,328 +1,174 @@
-import { useEffect } from "react";
-import { useFetcher } from "@remix-run/react";
-import {
-  Page,
-  Layout,
-  Text,
-  Card,
-  Button,
-  BlockStack,
-  Box,
-  List,
-  Link,
-  InlineStack,
-} from "@shopify/polaris";
-import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
-import { authenticate } from "../shopify.server";
-
-export const loader = async ({ request }) => {
-  await authenticate.admin(request);
-
-  return null;
-};
-
-export const action = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
-  const color = ["Red", "Orange", "Yellow", "Green"][
-    Math.floor(Math.random() * 4)
-  ];
-  const response = await admin.graphql(
-    `#graphql
-      mutation populateProduct($product: ProductCreateInput!) {
-        productCreate(product: $product) {
-          product {
-            id
-            title
-            handle
-            status
-            variants(first: 10) {
-              edges {
-                node {
-                  id
-                  price
-                  barcode
-                  createdAt
-                }
-              }
-            }
-          }
-        }
-      }`,
-    {
-      variables: {
-        product: {
-          title: `${color} Snowboard`,
-        },
-      },
-    },
-  );
-  const responseJson = await response.json();
-  const product = responseJson.data.productCreate.product;
-  const variantId = product.variants.edges[0].node.id;
-  const variantResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyRemixTemplateUpdateVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        productVariants {
-          id
-          price
-          barcode
-          createdAt
-        }
-      }
-    }`,
-    {
-      variables: {
-        productId: product.id,
-        variants: [{ id: variantId, price: "100.00" }],
-      },
-    },
-  );
-  const variantResponseJson = await variantResponse.json();
-
-  return {
-    product: responseJson.data.productCreate.product,
-    variant: variantResponseJson.data.productVariantsBulkUpdate.productVariants,
-  };
-};
+import { Button, Card, Page, Text } from '@shopify/polaris'
+import { useCallback, useEffect, useState } from 'react';
+import ConfirmationModal from '../components/ConfirmationModal';
+import SmartBulkTable from '../components/SmartBulkTable';
+import "../css/main.css"
 
 export default function Index() {
-  const fetcher = useFetcher();
-  const shopify = useAppBridge();
-  const isLoading =
-    ["loading", "submitting"].includes(fetcher.state) &&
-    fetcher.formMethod === "POST";
-  const productId = fetcher.data?.product?.id.replace(
-    "gid://shopify/Product/",
-    "",
-  );
+  const [selectedTableData, setSelectedTableData] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [orders, setOrders] = useState([]);
+  const [persistOrders, setPersistOrders] = useState([]);
+  const [selectedFilter, setSelectedFilter] = useState(["created desc"]);
+  const [queryValue, setQueryValue] = useState('');
+  const [totalOrders, setTotalOrders] = useState(0);
+  const [isTableLoading, setTableLoading] = useState(false)
+  const [pageInfo, setPageInfo] = useState({
+    hasNextPage: false,
+    hasPreviousPage: false,
+    endCursor: null,
+    startCursor: null
+  });
+  const [PageSize, setPageSize] = useState('5')
+  const [emailStatus, setEmailStatus] = useState([true, false])
+
 
   useEffect(() => {
-    if (productId) {
-      shopify.toast.show("Product created");
+    const debounceTimer = setTimeout(() => {
+      // console.log("inside if ");
+      console.log(`currentPage: ${currentPage}, queryValue: ${queryValue}, selectedFilter: ${selectedFilter}, PageSize: ${PageSize}`);
+
+      fetchPaginatedData();
+    }, 700);
+    return () => {
+      clearTimeout(debounceTimer);
+    };
+  }, [currentPage, queryValue, selectedFilter, PageSize]);
+
+
+  const fetchPaginatedData = async () => {
+    // console.log("Fetching page:", page, "with cursor:", cursor);
+    try {
+      if (!isTableLoading) {
+        setTableLoading(true);
+      }
+      const response = await fetch('/api/getOrders', {
+        method: "POST",
+        body: JSON.stringify({
+          endCursor: pageInfo.endCursor,
+          startCursor: pageInfo.startCursor,
+          PageSize: Number(PageSize),
+          queryValue,
+          selectedFilter: selectedFilter[0],
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+
+        if (data?.allOrders) {
+          console.log("Fetched data of fetchPaginatedData:", data.allOrders);
+          setOrders(data.allOrders)
+          setPersistOrders((pre) => ([
+            ...pre,
+            ...data.allOrders
+          ]))
+          // setTotalOrders(data.totalCount || 0);
+          // setPageInfo({
+          //   hasNextPage: data.pageInfo.hasNextPage,
+          //   hasPreviousPage: data.pageInfo.hasPreviousPage,
+          //   endCursor: data.pageInfo.endCursor,
+          //   startCursor: data.pageInfo.startCursor
+          // })
+        }
+      }
+    } catch (error) {
+      console.error("Error fetching paginated data:", error);
+    } finally {
+      setTableLoading(false);
     }
-  }, [productId, shopify]);
-  const generateProduct = () => fetcher.submit({}, { method: "POST" });
+
+  };
+
+  const handleSendMessageInitial = () => {
+    const modal = document.getElementById('confirmation_modal') | null;
+    console.log("modal", modal);
+    if (modal) {
+      modal.show();
+    }
+  }
+
+  const hideModal = () => {
+    const modal = document.getElementById('confirmation_modal') | null;
+    if (modal) {
+      modal.hide();
+    }
+  }
+
+  const handleSendMessageConfirmed = async () => {
+    // console.log("selectedTableData", selectedTableData);
+    hideModal();
+    const checkouts = selectedTableData.map((data) => {
+      if (data && data.id) {
+        return {
+          name: (data.firstName || data.lastName) ? (data.firstName ? `${data.firstName} ` : "") + (data.lastName || "") : "N/A",
+          phoneNumber: data.phone ? data.phone : "N/A",
+          messageContent: "",
+        };
+      }
+    });
+
+    // console.log("data3", data3);
+  }
+
+  const handleEmailStatusChange = useCallback((v) => {
+    console.log("handleEmailStatusChange v", v);
+    if (v?.length) {
+      setEmailStatus(v)
+    }
+  }, [])
 
   return (
-    <Page>
-      <TitleBar title="Remix app template">
-        <button variant="primary" onClick={generateProduct}>
-          Generate a product
-        </button>
-      </TitleBar>
-      <BlockStack gap="500">
-        <Layout>
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="500">
-                <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">
-                    Congrats on creating a new Shopify app 🎉
-                  </Text>
-                  <Text variant="bodyMd" as="p">
-                    This embedded app template uses{" "}
-                    <Link
-                      url="https://shopify.dev/docs/apps/tools/app-bridge"
-                      target="_blank"
-                      removeUnderline
-                    >
-                      App Bridge
-                    </Link>{" "}
-                    interface examples like an{" "}
-                    <Link url="/app/additional" removeUnderline>
-                      additional page in the app nav
-                    </Link>
-                    , as well as an{" "}
-                    <Link
-                      url="https://shopify.dev/docs/api/admin-graphql"
-                      target="_blank"
-                      removeUnderline
-                    >
-                      Admin GraphQL
-                    </Link>{" "}
-                    mutation demo, to provide a starting point for app
-                    development.
-                  </Text>
-                </BlockStack>
-                <BlockStack gap="200">
-                  <Text as="h3" variant="headingMd">
-                    Get started with products
-                  </Text>
-                  <Text as="p" variant="bodyMd">
-                    Generate a product with GraphQL and get the JSON output for
-                    that product. Learn more about the{" "}
-                    <Link
-                      url="https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate"
-                      target="_blank"
-                      removeUnderline
-                    >
-                      productCreate
-                    </Link>{" "}
-                    mutation in our API references.
-                  </Text>
-                </BlockStack>
-                <InlineStack gap="300">
-                  <Button loading={isLoading} onClick={generateProduct}>
-                    Generate a product
-                  </Button>
-                  {fetcher.data?.product && (
-                    <Button
-                      url={`shopify:admin/products/${productId}`}
-                      target="_blank"
-                      variant="plain"
-                    >
-                      View product
-                    </Button>
-                  )}
-                </InlineStack>
-                {fetcher.data?.product && (
-                  <>
-                    <Text as="h3" variant="headingMd">
-                      {" "}
-                      productCreate mutation
-                    </Text>
-                    <Box
-                      padding="400"
-                      background="bg-surface-active"
-                      borderWidth="025"
-                      borderRadius="200"
-                      borderColor="border"
-                      overflowX="scroll"
-                    >
-                      <pre style={{ margin: 0 }}>
-                        <code>
-                          {JSON.stringify(fetcher.data.product, null, 2)}
-                        </code>
-                      </pre>
-                    </Box>
-                    <Text as="h3" variant="headingMd">
-                      {" "}
-                      productVariantsBulkUpdate mutation
-                    </Text>
-                    <Box
-                      padding="400"
-                      background="bg-surface-active"
-                      borderWidth="025"
-                      borderRadius="200"
-                      borderColor="border"
-                      overflowX="scroll"
-                    >
-                      <pre style={{ margin: 0 }}>
-                        <code>
-                          {JSON.stringify(fetcher.data.variant, null, 2)}
-                        </code>
-                      </pre>
-                    </Box>
-                  </>
-                )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-          <Layout.Section variant="oneThird">
-            <BlockStack gap="500">
-              <Card>
-                <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">
-                    App template specs
-                  </Text>
-                  <BlockStack gap="200">
-                    <InlineStack align="space-between">
-                      <Text as="span" variant="bodyMd">
-                        Framework
-                      </Text>
-                      <Link
-                        url="https://remix.run"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        Remix
-                      </Link>
-                    </InlineStack>
-                    <InlineStack align="space-between">
-                      <Text as="span" variant="bodyMd">
-                        Database
-                      </Text>
-                      <Link
-                        url="https://www.prisma.io/"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        Prisma
-                      </Link>
-                    </InlineStack>
-                    <InlineStack align="space-between">
-                      <Text as="span" variant="bodyMd">
-                        Interface
-                      </Text>
-                      <span>
-                        <Link
-                          url="https://polaris.shopify.com"
-                          target="_blank"
-                          removeUnderline
-                        >
-                          Polaris
-                        </Link>
-                        {", "}
-                        <Link
-                          url="https://shopify.dev/docs/apps/tools/app-bridge"
-                          target="_blank"
-                          removeUnderline
-                        >
-                          App Bridge
-                        </Link>
-                      </span>
-                    </InlineStack>
-                    <InlineStack align="space-between">
-                      <Text as="span" variant="bodyMd">
-                        API
-                      </Text>
-                      <Link
-                        url="https://shopify.dev/docs/api/admin-graphql"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        GraphQL API
-                      </Link>
-                    </InlineStack>
-                  </BlockStack>
-                </BlockStack>
-              </Card>
-              <Card>
-                <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">
-                    Next steps
-                  </Text>
-                  <List>
-                    <List.Item>
-                      Build an{" "}
-                      <Link
-                        url="https://shopify.dev/docs/apps/getting-started/build-app-example"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        {" "}
-                        example app
-                      </Link>{" "}
-                      to get started
-                    </List.Item>
-                    <List.Item>
-                      Explore Shopify’s API with{" "}
-                      <Link
-                        url="https://shopify.dev/docs/apps/tools/graphiql-admin-api"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        GraphiQL
-                      </Link>
-                    </List.Item>
-                  </List>
-                </BlockStack>
-              </Card>
-            </BlockStack>
-          </Layout.Section>
-        </Layout>
-      </BlockStack>
+    <Page fullWidth>
+      <div className="container">
+        <div className="header">
+          <div className="text-section">
+            <Text variant="headingLg" as="p">
+              Orders list
+            </Text>
+            <div className="sub-text"></div>
+            <Text variant="bodyLg" as="p">
+              Select multiple orders in bulk with checkboxes, then click 'Send Message'
+            </Text>
+          </div>
+          <div className="button-container">
+            <Button
+              variant="primary"
+              // disabled={selectedTableData?.length}
+              onClick={handleSendMessageConfirmed}
+            >
+              Send Message
+            </Button>
+          </div>
+        </div>
+        <Card padding={{ xs: '190', sm: '190' }}>
+          <SmartBulkTable
+            setSelectedTableData={setSelectedTableData}
+            sortSelected={selectedFilter}
+            setSortSelected={setSelectedFilter}
+            orders={orders}
+            persistOrders={persistOrders}
+            currentPage={currentPage}
+            PageSize={PageSize}
+            totalOrders={totalOrders}
+            setCurrentPage={setCurrentPage}
+            pageInfo={pageInfo}
+            isTableLoading={isTableLoading}
+            setQueryValue={setQueryValue}
+            queryValue={queryValue}
+            handleEmailStatusChange={handleEmailStatusChange}
+            emailStatus={emailStatus}
+          />
+        </Card>
+        {/* <ConfirmationModal
+          handlePrimaryClick={handleSendMessageConfirmed}
+          handleSecondClick={hideModal}
+          primaryButtonText={"Send Message"}
+          secondaryButtonText={"Cancel"}
+          content={"Are you sure you want to send the message to the selected customers?"}
+          title={"Send Message"}
+        /> */}
+      </div>
     </Page>
-  );
+  )
 }
