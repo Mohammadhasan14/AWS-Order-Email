@@ -14,8 +14,8 @@ const processOrder = async (data, customerEmail) => {
         await Promise.all(
             data.lineItems.nodes.map(async (item) => {
                 try {
-                    // const link = await getObjectURL(`Movies/${item.variant.id}.mp4`);
-                    orderLinks[item.name] = `Movies/${item.variant.id}.mp4`;
+                    const link = await getObjectURL(`Movies/${item.variant.id}.mp4`);
+                    orderLinks[item.name] = link;
                 } catch (error) {
                     console.log(`Error processing line item ${item.name}:`, error);
                 }

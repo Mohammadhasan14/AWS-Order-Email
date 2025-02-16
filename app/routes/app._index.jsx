@@ -1,8 +1,8 @@
-import { Button, Card, Page, Text } from '@shopify/polaris'
+import { Button, Card, Page, Text } from '@shopify/polaris';
 import { useCallback, useEffect, useState } from 'react';
 import ConfirmationModal from '../components/ConfirmationModal';
 import SmartBulkTable from '../components/SmartBulkTable';
-import "../css/main.css"
+import "../css/main.css";
 
 export default function Index() {
   const [selectedTableData, setSelectedTableData] = useState([]);
@@ -11,33 +11,27 @@ export default function Index() {
   const [persistOrders, setPersistOrders] = useState([]);
   const [selectedFilter, setSelectedFilter] = useState(["created desc"]);
   const [queryValue, setQueryValue] = useState('');
-  const [totalOrders, setTotalOrders] = useState(0);
-  const [isTableLoading, setTableLoading] = useState(false)
+  const [isTableLoading, setTableLoading] = useState(false);
   const [pageInfo, setPageInfo] = useState({
     hasNextPage: false,
     hasPreviousPage: false,
-    endCursor: null,
-    startCursor: null
   });
-  const [PageSize, setPageSize] = useState('5')
-  const [emailStatus, setEmailStatus] = useState([true, false])
-
+  const [PageSize, setPageSize] = useState('5');
+  const [emailStatus, setEmailStatus] = useState([true, false]);
 
   useEffect(() => {
     const debounceTimer = setTimeout(() => {
-      // console.log("inside if ");
-      console.log(`currentPage: ${currentPage}, queryValue: ${queryValue}, selectedFilter: ${selectedFilter}, PageSize: ${PageSize}`);
-
+      console.log(
+        `currentPage: ${currentPage}, queryValue: ${queryValue}, selectedFilter: ${selectedFilter}, PageSize: ${PageSize}, emailStatus: ${emailStatus}`
+      );
       fetchPaginatedData();
     }, 700);
     return () => {
       clearTimeout(debounceTimer);
     };
-  }, [currentPage, queryValue, selectedFilter, PageSize]);
-
+  }, [currentPage, queryValue, selectedFilter, PageSize, emailStatus]);
 
   const fetchPaginatedData = async () => {
-    // console.log("Fetching page:", page, "with cursor:", cursor);
     try {
       if (!isTableLoading) {
         setTableLoading(true);
@@ -45,31 +39,23 @@ export default function Index() {
       const response = await fetch('/api/getOrders', {
         method: "POST",
         body: JSON.stringify({
-          endCursor: pageInfo.endCursor,
-          startCursor: pageInfo.startCursor,
+          page: currentPage,
           PageSize: Number(PageSize),
           queryValue,
           selectedFilter: selectedFilter[0],
+          emailStatus,
         }),
       });
 
       if (response.ok) {
         const data = await response.json();
-
         if (data?.allOrders) {
-          console.log("Fetched data of fetchPaginatedData:", data.allOrders);
-          setOrders(data.allOrders)
-          setPersistOrders((pre) => ([
-            ...pre,
-            ...data.allOrders
-          ]))
-          // setTotalOrders(data.totalCount || 0);
-          // setPageInfo({
-          //   hasNextPage: data.pageInfo.hasNextPage,
-          //   hasPreviousPage: data.pageInfo.hasPreviousPage,
-          //   endCursor: data.pageInfo.endCursor,
-          //   startCursor: data.pageInfo.startCursor
-          // })
+          console.log("Fetched data:", data.allOrders);
+          setOrders(data.allOrders);
+          setPersistOrders((prev) => ([...prev, ...data.allOrders]));
+          if (data.pageInfo) {
+            setPageInfo(data.pageInfo);
+          }
         }
       }
     } catch (error) {
@@ -77,46 +63,63 @@ export default function Index() {
     } finally {
       setTableLoading(false);
     }
-
   };
 
   const handleSendMessageInitial = () => {
-    const modal = document.getElementById('confirmation_modal') | null;
-    console.log("modal", modal);
+    const modal = document.getElementById('confirmation_modal');
     if (modal) {
       modal.show();
     }
-  }
+  };
 
   const hideModal = () => {
-    const modal = document.getElementById('confirmation_modal') | null;
+    const modal = document.getElementById('confirmation_modal');
     if (modal) {
       modal.hide();
     }
-  }
+  };
 
   const handleSendMessageConfirmed = async () => {
-    // console.log("selectedTableData", selectedTableData);
     hideModal();
-    const checkouts = selectedTableData.map((data) => {
-      if (data && data.id) {
-        return {
-          name: (data.firstName || data.lastName) ? (data.firstName ? `${data.firstName} ` : "") + (data.lastName || "") : "N/A",
-          phoneNumber: data.phone ? data.phone : "N/A",
-          messageContent: "",
-        };
+    console.log("selectedTableData", selectedTableData);
+    const orders = selectedTableData;
+  
+    if (!orders || orders.length === 0) {
+      shopify.toast.show("No orders selected");
+      return;
+    }
+  
+    try {
+      const response = await fetch('/api/sendEmail', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ orders }),
+      });
+  
+      const data = await response.json();
+      if (data?.success) {
+        shopify.toast.show("Emails sent successfully");
+        console.log("Emails sent successfully", data);
+      } else {
+        shopify.toast.show("Failed to send emails");
+        console.error("Failed to send emails:", data?.message);
       }
-    });
-
-    // console.log("data3", data3);
-  }
+    } catch (error) {
+      shopify.toast.show("Error sending emails");
+      console.error("Error sending emails:", error);
+    }
+  };
+  
+  
 
   const handleEmailStatusChange = useCallback((v) => {
     console.log("handleEmailStatusChange v", v);
     if (v?.length) {
-      setEmailStatus(v)
+      setEmailStatus(v);
     }
-  }, [])
+  }, []);
 
   return (
     <Page fullWidth>
@@ -132,11 +135,7 @@ export default function Index() {
             </Text>
           </div>
           <div className="button-container">
-            <Button
-              variant="primary"
-              // disabled={selectedTableData?.length}
-              onClick={handleSendMessageConfirmed}
-            >
+            <Button variant="primary" onClick={handleSendMessageConfirmed}>
               Send Message
             </Button>
           </div>
@@ -149,26 +148,16 @@ export default function Index() {
             orders={orders}
             persistOrders={persistOrders}
             currentPage={currentPage}
-            PageSize={PageSize}
-            totalOrders={totalOrders}
             setCurrentPage={setCurrentPage}
-            pageInfo={pageInfo}
             isTableLoading={isTableLoading}
             setQueryValue={setQueryValue}
             queryValue={queryValue}
             handleEmailStatusChange={handleEmailStatusChange}
             emailStatus={emailStatus}
+            pageInfo={pageInfo}
           />
         </Card>
-        {/* <ConfirmationModal
-          handlePrimaryClick={handleSendMessageConfirmed}
-          handleSecondClick={hideModal}
-          primaryButtonText={"Send Message"}
-          secondaryButtonText={"Cancel"}
-          content={"Are you sure you want to send the message to the selected customers?"}
-          title={"Send Message"}
-        /> */}
       </div>
     </Page>
-  )
+  );
 }
